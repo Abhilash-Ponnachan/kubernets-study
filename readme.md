@@ -446,7 +446,7 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-	  app: nginx
+      app: nginx
   template:
     metadata:
       labels:
@@ -599,6 +599,8 @@ In this section we will take a sample `Node.js` application with a _frontend web
 
   The code for this app can be found at https://github.com/Abhilash-Ponnachan/node-demo
 
+Let us create our **Deployment & Service** _YAML_ files. Since they almost always belong together, we typically write them together in one file (separated by `---`).  So our _backend service app_ (`bk-srv-app.yaml`) like like so:
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -636,7 +638,7 @@ spec:
     targetPort: 3001
 ```
 
-
+And the _frontend app_ (`fe-tst-app.yaml`) will be like below:
 
 ```yaml
 metadata:
@@ -680,7 +682,7 @@ spec:
     nodePort: 30000
 ```
 
-
+> > **Note: With `minikube` if we need to access our local `docker` images, one of the simplest ways to do that is to execute a `mijnikube` command that will point the shells docker commands to target the `minikube` `docker` environment (instead of the host `docker` environment). This is shown in the snippet below. keep in mind though that this is active/valid only in the current shell till we exit from it. If we open a new shell instance this local env setting will not apply. **
 
 ```bash
 # Run this in current shell -
@@ -690,4 +692,264 @@ $ eval $(minikube docker-env)
 # Note: this is valid only in current shell session
 
 ```
+
+#### >> Namespaces
+
+**Namespaces** in _Kubernetes_ is analogous to their idea in other aspects like programming languages. They essentially provide a _logical grouping_ construct to organise resources into meaningful groups. This helps manage the complexity of having too many resources all cluttered together, and also helps avoid name conflicts when different groups are working together on the same cluster. If we do not explicitly specify a _namespace_ the resource will be placed in the `default` _namespace_. If we look at the namespaces for a standard deployment we might see something like (_in the case of `minikube`, for full `k8s` it might be slightly different_).
+
+```bash
+$ kubectl get namespaces 
+NAME              STATUS   AGE
+default           Active   26d
+kube-node-lease   Active   26d
+kube-public       Active   26d
+kube-system       Active   26d
+```
+
+Another useful feature of _namespaces_ is that we can use that to "control access" (grant permissions) to users at _namespace_ level.
+
+From an administration perspective we can also specify "resource quotas" (CPU, RAM, storage etc.) per _namespace_. This gives us a way to control limits to how much underlying cluster resources a namespace can consume.
+
+One thing to keep in mind is that most _Kubernetes_ resources cannot be shared across _namespaces_. For example the same **ConfigMap** or **Secrets** configuration cannot be used in more than one _namespace_, each _namespace_ will need to define its own. However certain resources make sense to share, like **Services**. When we want to do this we would have to refer to the **service** with its _"fully qualified name"_(suffix with the _namespace_ separated with a `.`). An example might be `db_url: my-sql-db-service.data-namespace`.
+
+Also certain resources live in a _"global" namespace_, that is they cannot be placed into any particular one. Examples are **Volume** and **Node**. In fact we can list the _Kubernetes_ resources that are not namespaced using the following command:
+
+```bash
+$ kubectl api-resources --namespaced=false -o name
+componentstatuses
+namespaces
+nodes
+persistentvolumes
+mutatingwebhookconfigurations.admissionregistration.k8s.io
+validatingwebhookconfigurations.admissionregistration.k8s.io
+customresourcedefinitions.apiextensions.k8s.io
+apiservices.apiregistration.k8s.io
+tokenreviews.authentication.k8s.io
+selfsubjectaccessreviews.authorization.k8s.io
+selfsubjectrulesreviews.authorization.k8s.io
+subjectaccessreviews.authorization.k8s.io
+certificatesigningrequests.certificates.k8s.io
+ingressclasses.networking.k8s.io
+runtimeclasses.node.k8s.io
+podsecuritypolicies.policy
+clusterrolebindings.rbac.authorization.k8s.io
+clusterroles.rbac.authorization.k8s.io
+priorityclasses.scheduling.k8s.io
+csidrivers.storage.k8s.io
+csinodes.storage.k8s.io
+storageclasses.storage.k8s.io
+volumeattachments.storage.k8s.io
+```
+
+Of course the same command can be used with `--namespaced=true` to get resources that exist in _namespaces_.
+
+We can also search for resources by _namespace_ using the `--namespace` option.
+
+```bash
+$ kubectl get pods --namespace=default
+NAME                              READY   STATUS    RESTARTS   AGE
+bk-srv-app-dpl-5f69d7fd79-c2cff   1/1     Running   4          15d
+fe-tst-app-dpl-b544776c9-dtrvq    1/1     Running   4          15d
+```
+
+To get a list of all _Kubernetes_ resources and their details within a namespace we could do something like:
+
+```bash
+$ kubectl api-resources -name o | xrags -n 1 kubectl get --show-kind --ignore-not-found --namespace=<my-namespace>
+```
+
+This will pipe the result of the first command output to the second one and execute for each result from the first. The second command gets the  details for each resource item passed to it.
+
+If we just want the regular _Kubernetes_ workload resources we could simply do:
+
+```bash
+$ kubectl get all -n <my-namespace>
+```
+
+
+
+When we create (or get) resources without specifying a _namespace_, the `default` _namespace_ is applied. For example if we want to create a **ConfigMap** in a _namespace_ called _"my-namespace"_, then we can do that like so:
+
+```bash
+$ kubectl apply -f mysql-configmap.yaml --namespace=backend-srvs
+```
+
+Or we can specify that in our _configuration file_ using the `namespace` attribute.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-configmap
+  namespace: backend-srvs
+data:
+  db_url: mysql-service.database
+```
+
+So this **ConfigMap** might would be created in the `backend-srvs` _namespace_ and have a `db_url` pointing to `mysql-service` in the `database` _namespace_. Now if we want to list **ConfigMaps** from this _namespace_ we can get it by specifying that in the `get` command:
+
+```bash
+$ kubectl get configmap -n backend-srvs
+```
+
+Since `kubectl` always uses the `default` _namespace_ unless we explicitly specify another one, it can get quite cumbersome to do that with every command if we are exclusively working with a specific _namespace_. To help with that we can install additional tool set like `kubectx` which has a command `kubens` which we can use to change the _"active namespace"_ to what we want. Once we do that, all the `kubectl` commands will apply implicitly to _namespace_ we have made _"active"_.
+
+#### >> Ingress
+
+In our _"demo application"_ we saw how to access our `fe-tst-app` via the `fe-srv` service. This was specified as an **External Service** (`type: LoadBalancer`), with a specified `nodePort` (which has to be in the range `30000` to `32767`). Now the **External Service** will get an **IP** assigned to it and then we can access our service with that **IP** and the exposed **NodePort**. Whilst this works, it has some downsides such as:
+
+- We can have only only **Service** per **Port**.
+- Ports have to be in the range `30000` to `32767`.
+- If the **Node** IP changes then this has to be handled (perhaps in whatever **Reverse Proxy** setup we have).
+
+A better way to do expose our services external to the **Cluster** is to use an **Ingress** component. It is not a _Kubernetes_ **Service** but an **API Object** that can act as a **Reverse Proxy**, providing a _single entry point_ to the cluster (exposed as external URLs). It can also provide _Load Balancing_, _SSL termination_ & _TLS_ capability, as well as _Domain Based_ and _Path Based_ **Routing** to different **Services**.
+
+###### Ingress Controller
+
+Now In order for **Ingress** to work, there has to be an **Ingress Controller** that can watch and execute the _"Rules"_ for the configured **Ingress Resource**. The **Ingress Controller** runs as a **Pod** (generally in the `kube-system` **Namespace**). 
+
+To see how it works let us pick one implementation of an **Ingress Controller** and install it in our **Cluster**. For `minikube` we can do that with the following command:
+
+```bash
+# install minikube addons for ingress
+$ minikube addons enable ingress
+```
+
+This should install an `nginx` implementation of **Ingress Controller** for `minikube`, in the **`kube-system`** _namespace_.
+
+```bash
+$ kubectl get pods -n kube-system
+NAME                                        READY   STATUS      RESTARTS   AGE
+coredns-f9fd979d6-vnprd                     1/1     Running     15         29d
+etcd-minikube                               1/1     Running     15         29d
+ingress-nginx-admission-create-vcpxw        0/1     Completed   0          44h
+ingress-nginx-admission-patch-hzbrq         0/1     Completed   2          44h
+ingress-nginx-controller-558664778f-82zgj   1/1     Running     2          44h
+kube-apiserver-minikube                     1/1     Running     15         29d
+kube-controller-manager-minikube            1/1     Running     15         29d
+kube-proxy-c7bt7                            1/1     Running     15         29d
+kube-scheduler-minikube                     1/1     Running     15         29d
+storage-provisioner                         1/1     Running     29         29d
+```
+
+We can see our **Ingress Controller** running as a **Pod** with name "`ingress-nginx-controller-558664778f-82zgj`". If we want to see further details we can use the `describe` command on the controller **Pod**:
+
+```bash
+$ kubectl describe pod -n kube-system ingress-nginx-controller-558664778f-82zgj
+Name:         ingress-nginx-controller-558664778f-82zgj
+Namespace:    kube-system
+Priority:     0
+Node:         minikube/192.168.49.2
+Start Time:   Thu, 07 Jan 2021 16:46:03 +0000
+Labels:       addonmanager.kubernetes.io/mode=Reconcile
+              app.kubernetes.io/component=controller
+              app.kubernetes.io/instance=ingress-nginx
+              app.kubernetes.io/name=ingress-nginx
+              gcp-auth-skip-secret=true
+              pod-template-hash=558664778f
+Annotations:  <none>
+Status:       Running
+IP:           172.17.0.4
+...
+```
+
+###### Add Ingress for our App
+
+Now we can finally modify our application to add an **Ingress** component to expose our _"Demo Project"_. The steps to do this is as follows:
+
+- Change our _frontend_ **Service** (`fe-srv`) to a normal (`Cluster IP`) **Service**. Currently we had set that up as an **External Service** (`Load Balancer`), to make it externally available with a `nodePort`. When using **Ingress** we do not need the `nodePort`, the **Ingress Resource** will communicate with the `Cluster IP` **Service** internally via the _"Cluster Network"_. So now our `fe-srv` configuration file will look like:
+
+  ```yaml
+  ---
+  apiVersion: v1
+  kind: Service
+  metadata:
+    name: fe-srv
+  spec:
+    selector:
+      app: fe-app
+  #  type: LoadBalancer - remove this line
+    ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+  #    nodePort: 30000 - remove this line
+  ```
+
+  We simply remove the commented lines. Now if we list the services we should see:
+
+  ```bash
+  $ kubectl get service
+  NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+  bk-srv       ClusterIP   10.108.24.241   <none>        3001/TCP   17d
+  fe-srv       ClusterIP   10.110.46.94    <none>        3000/TCP   17d
+  kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP    29d
+  ```
+
+  Now `fe-srv` is a normal `ClusterIP`  **Service**.
+
+- Next we create an **Ingress** _configuration file_ with routing details to a _backend_ for it, which in our case is the `fe-srv` **Service**.
+
+  ```yaml
+  apiVersion: networking.k8s.io/v1
+  kind: Ingress
+  metadata:
+    name: fe-ingress
+    annotations:
+      #nginx.ingress.kubernetes.io/rewrite-target: /$1
+      kubernetes.io/ingress.class: nginx
+  spec:
+    rules:
+    - host: test-app.com
+      http:
+        paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: fe-srv
+              port:
+                number: 3000
+  ```
+
+  The **host**/**domain name** that we will use to access this will be `test-app.com`. The default path `/` will route to our **Service** (`fe-srv`) on **Port** `3000`. of course we create the **Ingress Resource** like any other using the `apply` command:
+
+  ```bash
+  $ kubectl apply -f fe-ingress.yaml
+  ```
+
+- Now we can `get` our **Ingress Object** and see the details:
+
+  ```bash
+  $ kubectl get ingress
+  NAME         CLASS    HOSTS          ADDRESS        PORTS   AGE
+  fe-ingress   <none>   test-app.com   192.168.49.2   80      25h
+  ```
+
+  So our **Ingress** is listening on **Port** `80` at **IP** `192.168.49.2`. If we want we can use a browser and navigate to this **IP** and see our application page loaded.
+
+- Note that in there is no **DNS** that resolves our **host name** `test-app.com` to this **IP** yet, so we will not be able to access it with that till we provide some configuration for that. In a real world scenario there would be some **Gateway** or **Reverse Proxy** in front of our **Cluster** or some mechanism that register this **Ingress IP** with a **DNS registry**. For example "**ExternalDNS**" is a tool that can create **DNS records** in an external **DNS server** (like **`Route53`**). Just like the **Ingress Controller**, **External DNS** will run on a **Pod** and will be configured to monitor the **Ingress Objects** and make the necessary **`Route53`** changes.
+
+- In our local environment wit `minikube` though we will keep it simple and just go and create an entry in the `/etc/hosts` file.
+
+  ```txt
+  $ cat /etc/hosts
+  127.0.0.1		localhost
+  127.0.1.1		kube-test-ub
+  192.168.49.2	test-app.com
+  ```
+
+  That should be all that is needed and we we should be able to enter the **URL** `http://test-app.com` in the browser and everything should load and work as expected.
+
+- If we wish to troubleshoot or see **logs** of the ingress we can do that with the `logs` command (on the **Ingress Controller Pod**):
+
+  ```bash
+  $ kubectl logs -n kube-system ingress-nginx-controller-558664778f-82zgj
+  ```
+
+- 
+
+
+
+
 
