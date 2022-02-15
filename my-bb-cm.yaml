@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-bb-cm-1
+data:
+  # key-value properties
+  CM-1-KEY-1: cm-1-val-1
+  CM-1-KEY-2: cm-1-val-2
+  CM-1-KEY-3: cm-1-val-3
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-bb-cm-2
+data:
+  # key-value properties
+  CM-2-KEY-1: cm-2-val-1
+  CM-2-KEY-2: my_cm_val_2
+  # file like properties
+  CM-2-FILE-1.txt: |
+    CM-2-FILE-1-KEY-1=cm-2-file-1-val-1
+    CM-2-FILE-1-KEY-2=cm-2-file-1-val-2
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: my-bb-cm-3
+data:
+  # key-value properties
+  CM-3-KEY-1: my_cm_val_1
+  CM-3-KEY-2: my_cm_val_2
+  # file like data
+  CM-3-FILE-1.txt: |
+    CM-3-FILE-1-KEY-1=cm-3-file-1-val-1
+    CM-3-FILE-1-KEY-2=cm-3-file-1-val-2
+  CM-3-FILE-2: |
+    CM-3-FILE-2-KEY-1=cm-3-file-2-val-1
+    CM-3-FILE-2-KEY-2=cm-3-file-2-val-2
+    CM-3-FILE-2-KEY-3=cm-3-file-2-val-3

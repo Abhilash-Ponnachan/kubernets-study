@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: my-busybox-dpl
+  name: my-busybox-dpl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-busybox-dpl
+  template:
+    metadata:
+      labels:
+        app: my-busybox-dpl
+    spec:
+      containers:
+      - image: busybox
+        name: my-busybox
+        env:
+          - name: MY_ENV_KEY_1
+            value: "my-env-val-1"
+          - name: MY_ENV_KEY_2
+            value: "my-env-val-2"
+          # custom named env vars (diff from cm-1)
+          - name: MY_CONF_KEY_1
+            valueFrom:
+              configMapKeyRef:
+                # name of cm-1
+                name: my-bb-cm-1
+                # name of key within cm-1
+                key: CM-1-KEY-1
+          # custom named env vars (diff from cm-1)
+          - name: MY_CONF_KEY_2
+            valueFrom:
+              configMapKeyRef:
+                # name of cm-1
+                name: my-bb-cm-1
+                # key within cm-1
+                key: CM-1-KEY-2
+        # load env as is from cm 
+        # (vars have same names as keys in cm-2)
+        envFrom:
+          - configMapRef:
+              name: my-bb-cm-2
+        # mount config-volume to desired path
+        volumeMounts:
+        - name: my-config-vol
+          mountPath: "/config/"
+          readOnly: true
+        command: ["/bin/sh"]
+        args:
+          - -c
+          - >-
+              env &&
+              tail -f /dev/null
+      volumes:
+      # attach configMap as a volume
+      - name: my-config-vol
+        configMap:
+          name: my-bb-cm-3

@@ -947,9 +947,111 @@ Now we can finally modify our application to add an **Ingress** component to exp
   $ kubectl logs -n kube-system ingress-nginx-controller-558664778f-82zgj
   ```
 
-- 
+- **Ingress** gives us the ability to _route_ to multiple **Services**. 
 
+  - We can either have multiple **Services** as different **Paths** under the same **Hostname** (for e.g. `https://my-application.com/service1`, `https://my-application.com/service2`).
+  - Or we can have the **Services** under different **Hostnames** (typically using different subdomains, for e.g. `https://service1.my-application.com`, `https://service2.my-application.com`).
 
+###### Configuring TLS
+
+So far we have seen how to use **Ingress** only with **HTTP**. _Kubernetes_ makes it rather easy for us to add **TLS** capabilities with **Ingress**. All we have to do is to modify our **Ingress Configuration** with **Specification** information about the **TLS certificate** which can be added to a **Secrets Resource**.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fe-ingress
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  tls:
+  - hosts:
+    - test-app.com
+      secretName: test-app-sec-tls
+  rules:
+  - host: test-app.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fe-srv
+            port:
+              number: 3000
+```
+
+We add a section for `tls` with the `secretName` pointing to a _Kubernetes_ **TLS Secret**. To create the actual **TLS certificate** we could use `openssl` (in our case it can be a _self signed certificate_).
+
+```bash
+$ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -out test-app-ingress-tls.crt \
+    -keyout test-app-ingress-tls.key \
+    -subj "/CN=test-app.com/O=test-app-sec-tls"
+```
+
+This will create a `2048` bit `x509` certificate valid for `365` days with a _certificate file_ `test-app-ingress-tls.cert` and a _private key file_ `test-app-ingres-tls.key`.
+
+```bash
+$ kubectl create secret tls test-app-sec-tls \
+    --key test-app-ingress-tls.key \
+    --cert test-app-ingress-tls.cert
+```
+
+Next we create a **Secret** passing in these `cert` and `key` files. We can then _reference_ this **Secret** in the **Ingress** routes as we saw in the configuration file above.
+
+_Of course, the **Ingress** and the **Secret** have to be in the same namespace_.
+
+#### >> Helm
+
+### >> Common Commands & Tips
+
+```bash
+# shortcut to create configuration file blueprint imperatively
+# get a baseline yaml config for Pods
+$ kubectl run my-alp-app --image=alpine --dry-run -o yaml >> my-alp-pod.yaml
+
+# open and edit this 'my-alp-app.yaml' config
+```
+
+```bash
+# simialrly get a definition file from an existing Pod
+$ kubectl get pod my-pod-name -o yaml >> my-pod-config.yaml
+# edit this file and apply it using 'apply' command to edit the pod
+$ kubectl apply -f my-pod-config.yaml
+```
+
+```bash
+# we can imperatively edit a Pod using the 'edit' command
+$ kubectl eidt pod my-pod-name 
+```
+
+Of course these commands work for other **K8s** resources such as **Deployments**, **Services** etc., not just **Pods**.
+
+```bash
+# see more information with the 'wide' option
+$ k get pods -o wide
+NAME                              READY   STATUS    RESTARTS   AGE    IP            NODE       NOMINATED NODE   READINESS GATES
+# this is an easy way to see the Nodes that the Pods run on
+```
+
+Formatting outputs using **`awk`**.
+
+```bash
+# print Pods and their Nodes
+$kubectl get pods -o wide | awk '{print NR ":" $1 "-" $7}'
+# 1st column is Pod name and 7th column is Node name
+```
+
+Formatting outputs using **`jsonpath`** and **`jq`**.
+
+```bash
+# get pod names only using jq
+$kubectl get pods -o json | jq '.items[].metadata.name'
+
+# get pod names only using jsonpath
+$kubectl get pods -o jsonpath="{@.items[*].metadata.name}"
+```
 
 
 
