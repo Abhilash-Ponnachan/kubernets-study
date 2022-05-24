@@ -38,24 +38,57 @@ spec:
                 name: my-bb-cm-1
                 # key within cm-1
                 key: CM-1-KEY-2
+          # custom named env vars (from secrets sec-1)
+          - name: MY_SEC_KEY_1
+            valueFrom:
+              secretKeyRef:
+                name: my-bb-sec-1
+                key: SEC-1-KEY-1 
+          # custom named env vars (from secrets sec-1)
+          - name: MY_SEC_KEY_1
+            valueFrom:
+              secretKeyRef:
+                name: my-bb-sec-1
+                key: SEC-1-KEY-1 
+          # custom named env vars (from secrets sec-1)
+          - name: MY_SEC_KEY_2
+            valueFrom:
+              secretKeyRef:
+                name: my-bb-sec-1
+                key: SEC-1-KEY-2 
         # load env as is from cm 
         # (vars have same names as keys in cm-2)
         envFrom:
           - configMapRef:
               name: my-bb-cm-2
+        # load env as is from secrets (sec-2)
+        envFrom:
+          - secretRef:
+              name: my-bb-sec-2
         # mount config-volume to desired path
         volumeMounts:
         - name: my-config-vol
           mountPath: "/config/"
           readOnly: true
+        - name: my-secret-vol
+          mountPath: "/secrets/"
+          readOnly: true
         command: ["/bin/sh"]
         args:
           - -c
           - >-
+              echo "=== env vars => " &&
               env &&
+              echo "=== contents of /config => " &&
+              ls /config &&
+              echo "=== contents of /secrets => " &&
+              ls /secrets &&
               tail -f /dev/null
       volumes:
       # attach configMap as a volume
       - name: my-config-vol
         configMap:
           name: my-bb-cm-3
+      - name: my-secret-vol
+        secret:
+          secretName: my-bb-sec-3

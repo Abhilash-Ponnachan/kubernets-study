@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-alpine
+spec:
+  containers:
+  - image: alpine_plus
+    name: my-alpine
+    imagePullPolicy: Never
+    command: ["/bin/sh"]
+    args:
+    - -c
+    - >-
+      echo ===== Alpine Box for Testing =====
+      && tail -f /dev/null
+  dnsPolicy: ClusterFirst
+  restartPolicy: Never

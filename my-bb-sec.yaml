@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-bb-sec-1
+data:
+  # key-value properties
+  SEC-1-KEY-1: c2VjLTEtdmFsLTE=
+  SEC-1-KEY-2: c2VjLTEtdmFsLTI=
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-bb-sec-2
+data:
+  # key-value properties
+  SEC-2-KEY-1: c2VjLTItdmFsLTE=
+  # file like properties
+  SEC-2-FILE-1.txt: U0VDLTItRklMRS0xLUtFWS0xPXNlYy0yLWZpbGUtMS12YWwtMQ==
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-bb-sec-3
+data:
+  # key-value properties
+  SEC-3-KEY-1: bXlfc2VjX3ZhbF8x
+  SEC-3-KEY-2: bXlfc2VjX3ZhbF8y
+  # file like data
+  SEC-3-FILE-1.txt: U0VDLTMtRklMRS0xLUtFWS0xPXNlYy0zLWZpbGUtMS12YWwtMQpTRUMtMy1GSUxFLTEtS0VZLTI9c2VjLTMtZmlsZS0xLXZhbC0yCg==

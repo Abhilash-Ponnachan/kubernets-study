@@ -13,16 +13,16 @@ spec:
         value: "my env val 1"
       - name: MY_ENV_KEY_2
         value: "my emv val 2"
-      - name: MY_CONF_KEY_1
-        valueFrom:
-          configMapKeyRef:
-            name: my-bb-cm  
-            key: MY_CM_KEY_1
-      - name: MY_CONF_KEY_2
-        valueFrom:
-          configMapKeyRef:
-            name: my-bb-cm  
-            key: MY_CM_KEY_2
+#      - name: MY_CONF_KEY_1
+#        valueFrom:
+#          configMapKeyRef:
+#            name: my-bb-cm  
+#            key: MY_CM_KEY_1
+#      - name: MY_CONF_KEY_2
+#        valueFrom:
+#          configMapKeyRef:
+#            name: my-bb-cm  
+#            key: MY_CM_KEY_2
 
     command: ["/bin/sh"]
     args:

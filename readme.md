@@ -1053,5 +1053,130 @@ $kubectl get pods -o json | jq '.items[].metadata.name'
 $kubectl get pods -o jsonpath="{@.items[*].metadata.name}"
 ```
 
+### >> User Authentication (Certificates & kube-config)
 
+```bash
+# Extract "ca.crt" && "ca.key" from the control-plane/master node (which has the kube-api server)
+# Example command for a "kind" cluster
+$ kubectl cp kind-cluster:/etc/kubernetes/pki/ca.crt ca.crt
+$ kubectl cp kind-cluster:/etc/kubernetes/pki/ca.key ca.key
+
+# Create certificate for user "Alice", and sign it with kubernetes CA
+# Generate rsa key-file
+$ openssl genrsa -out alice.key 2048
+# Now we should have an RSA key file "alice.key" with private-key 2048 bit long (modulus) & exponent=65537
+
+# Next create a Certificate Signing Request (CSR) for our key
+$ openssl req -new -key alice.key -out alice.csr -subj "/CN=Alice Smith/O=Accounting"
+# CSR using alice.key for identity/subject "Alice Smith" & organisation/group = "Accounting"
+
+# Use the CSR and our Kubernetes cluster CA to generate and sign a client certificate for Alice
+$ openssl x509 -req -in alice.csr -CA kind-ca.crt -CAkey kind-ca.key -CAcreateserial -out alice.crt -days 365
+    ...
+    Signature ok
+    subject=CN = Alice Smith, O = Accounting
+    Getting CA Private Key
+# Now we should have alice.key & alice.crt signed by kind-ca.crt & kind-ca.key
+
+# Let's create a different kube-config file for "Alice", in order to keep things clean & separate
+# for this we require the "server" URL of teh existing cluster, which we can obtain by looking at the existing "config"
+$ kubectl config view
+# Note the values of cluster.server: https://127.0.0.1:42773 & cluster.name: kind-kind
+
+# Create a new kube-config file using the following command
+$ kubectl config set-cluster kind-kind \
+  --server=https://127.0.0.1:42773 \
+  --certificate-authority=kind-ca.crt \
+  --embed-certs=true \
+  --kubeconfig="$HOME/.kube/acc-config"
+# The last flag "--kubeconfig=$HOME/.kube/acc-config" is VERY IMPORTANT, it makes sure this command POINTS 
+# to a different config file (in this case it creates a new one). 
+# If we do not specify this the ORIGINAL/DEFAULT config will get modified!!
+# Now a new "acc-config" should be aavailabel with the cluster/server details we provided.
+# Another (perhaps safer) way to do this is to override the USE of DEFAULT config by specifying the KUBECONFIG env var
+# export KUBECONFIG=~/.kube/acc-config
+# At this stage we should be able to view the "new config" using kubectl, even though other details are missing.
+$ k config view --kubeconfig="$HOME/.kube/acc-config"
+    apiVersion: v1
+    clusters:
+    - cluster:
+        certificate-authority-data: DATA+OMITTED
+        server: https://127.0.0.1:42773
+      name: kind-kind
+    contexts: null
+    current-context: ""
+    kind: Config
+    preferences: {}
+    users: null
+
+# Now we have cluster in our "acc-config", next add user(credentials) to it for Alice
+$ kubectl config set-credentials alice \
+ --client-certificate=alice.crt \
+ --client-key=alice.key \
+ --embed-certs=true \
+ --kubeconfig="$HOME/.kube/acc-config"
+# Now a user "alice" (with credentials as alice.crt & alice.key) should be added to our "acc-config" file
+$ k config view --kubeconfig="$HOME/.kube/acc-config"
+    apiVersion: v1
+    clusters:
+    - cluster:
+        certificate-authority-data: DATA+OMITTED
+        server: https://127.0.0.1:42773
+      name: kind-kind
+    contexts: null
+    current-context: ""
+    kind: Config
+    preferences: {}
+    users:
+    - name: alice
+      user:
+        client-certificate-data: REDACTED
+        client-key-data: REDACTED
+
+# Next link the "cluster" to teh "user" with a context, so add a new conext (let us call it "dev" for developers)
+$ kubectl config set-context dev --cluster=kind-kind --user=alice --namespace=accounting --kubeconfig="$HOME/.kube/acc-config"
+# Note we have not created namespace "accounting" just yet, we can do that later
+# Here we just specify the "namespace" to beteh default one for this user
+# Also Note that the user "alice" in the "config" is just a string for the "config file",
+# The Kuernetes cluster does not know or see this, it uses the "CN" (Alice Smith) in the certificate as the identity/principal. 
+
+# In order for "kubectl" to use this conext, we have to make it the "current-context" 
+# OR keep specifying this context with every command.
+# Let us make this the current-context
+$ k config use-context dev --kubeconfig="$HOME/.kube/acc-config"
+# Finaly our new kube-cong file "acc-config" should look like
+$ k config view --kubeconfig="$HOME/.kube/acc-config"
+    apiVersion: v1
+    clusters:
+    - cluster:
+        certificate-authority-data: DATA+OMITTED
+        server: https://127.0.0.1:42773
+      name: kind-kind
+    contexts:
+    - context:
+        cluster: kind-kind
+        namespace: accounting
+        user: alice
+      name: dev
+    current-context: dev
+    kind: Config
+    preferences: {}
+    users:
+    - name: alice
+      user:
+        client-certificate-data: REDACTED
+        client-key-data: REDACTED
+
+# Finally we can use this kube-config ("acc-config") to authenticate to our "kind" cluster
+# and try to retrieve some resources
+$ k get ns --kubeconfig="$HOME/.kube/acc-config"
+ Error from server (Forbidden): namespaces is forbidden: User "Alice Smith" cannot list resource "namespaces" in API group "" at   the cluster scope
+# .. And we get an error.. So it looks like we did "authenticate" as "Alice Smith", but this principal is 
+# not "authorised" to do anything yet.
+# For that we can use RABC.
+```
+
+#### >> RBAC
+
+In order to give the user _"Alice Smith"_ permissions to do things in the cluster, we have to create a **Role** and bind that to the _certificate_ using a **RoleBinding**. Since these are **Kubernetes API Resources**, we can create these using the configuration (YAML) files. 
 
