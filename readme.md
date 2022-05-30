@@ -1133,7 +1133,7 @@ $ k config view --kubeconfig="$HOME/.kube/acc-config"
         client-certificate-data: REDACTED
         client-key-data: REDACTED
 
-# Next link the "cluster" to teh "user" with a context, so add a new conext (let us call it "dev" for developers)
+# Next link the "cluster" to the "user" with a context, so add a new conext (let us call it "dev" for developers)
 $ kubectl config set-context dev --cluster=kind-kind --user=alice --namespace=accounting --kubeconfig="$HOME/.kube/acc-config"
 # Note we have not created namespace "accounting" just yet, we can do that later
 # Here we just specify the "namespace" to beteh default one for this user
@@ -1174,9 +1174,215 @@ $ k get ns --kubeconfig="$HOME/.kube/acc-config"
 # .. And we get an error.. So it looks like we did "authenticate" as "Alice Smith", but this principal is 
 # not "authorised" to do anything yet.
 # For that we can use RABC.
+# Also note that Kubernetes identifies the user as "Alice Smith" which is the value we set as "CN" in the certificate
+# subject, and NOT as "alice" which is just a string/token used only within the context of the config file
 ```
 
 #### >> RBAC
 
 In order to give the user _"Alice Smith"_ permissions to do things in the cluster, we have to create a **Role** and bind that to the _certificate_ using a **RoleBinding**. Since these are **Kubernetes API Resources**, we can create these using the configuration (YAML) files. 
 
+Since we are limiting the user to the `accounting` **namespace** let us first create that
+
+```bash
+$ k create ns accounting
+```
+
+Next we create a **Role** with the required permissions (in this case just _manage pods_, _list deployments_). To do this we can create a manifest file for the _Kubernetes API Object_ **Role**. The simplest way to have a _starting template_ of the YAML is to _dry-run_ the imperative command and redirect it to a file.
+
+```bash
+$ k create role acc-pods --resource=pods --verb=get,list,watch --namesoace=accounting --dry-run=client -o yaml > acc-role.yaml
+```
+
+Now we should have a `acc-role.yaml` file which we can open and edit and make necessary additions. When done, for our demo purposes it should look like:
+
+```yaml
+ 1 apiVersion: rbac.authorization.k8s.io/v1
+ 2 kind: Role
+ 3 metadata:
+ 4   name: acc-pods
+ 5   namespace: accounting
+ 6 rules:
+ 7 - apiGroups:
+ 8   - ""
+ 9   resources:
+ 10   - pods
+ 11   verbs:
+ 12   - get
+ 13   - list
+ 14   - watch
+ 15   - create
+ 16   - update
+ 17   - patch
+ 18 - apiGroups:
+ 19   - "apps"
+ 20   resources:
+ 21   - deployments
+ 22   verbs:
+ 23   - get
+ 24   - list
+```
+
+Now we `apply` the file and create the **Role**.
+
+```bash
+$ k apply -n accounting -f acc-role.yaml
+```
+
+Next step is to link this **Role** to the **User** (as identified by the `CN` in the certificate) using a **RoleBinding**. Again a simple way to have a starter YAML is to do a _dry-run_ with an imperative command and redirect it.
+
+```bash
+$ k create rolebinding acc-alice-rb --user="Alice Smith" --role=acc-pods --namespace=accounting --dry-run=client -o yaml > acc-alice-role-bind.yaml
+```
+
+This should give us a **RoleBinding** YAML file:
+
+```yaml
+1 apiVersion: rbac.authorization.k8s.io/v1
+2 kind: RoleBinding
+3 metadata:
+4   name: acc-alice-rb
+5   namespace: accounting
+6 roleRef:
+7   apiGroup: rbac.authorization.k8s.io
+8   kind: Role
+9   name: acc-pods
+10 subjects:
+11 - apiGroup: rbac.authorization.k8s.io
+12   kind: User
+13   name: Alice Smith
+```
+
+Now we can check it and if we are happy then, `apply` this YAML.
+
+```bash
+$ k apply -n accounting -f acc-alice-role-bind.yaml
+```
+
+Now the **Role** `acc-pods` should be _bound_ to the **User** `Alice Smith`.
+
+At this stage we can try to use the `kubeconfig` we had created and try to list some resources from our cluster. 
+
+```bash
+$ k get pods --kubeconfig=$HOME/.kube/acc-config
+No resources found in accounting namespace.
+$ k get deploy --kubeconfig=$HOME/.kube/acc-config
+No resources found in accounting namespace.
+$ k get svc --kubeconfig=$HOME/.kube/acc-config
+Error from server (Forbidden): services is forbidden: User "Alice Smith" cannot list resource "services" in API group "" in the namespace "accounting"
+```
+
+So with this `kubeconfig`, **Role**, & **RoleBinding**  _Kubernetes_ performs **"authentication"** && **"authorisation"** to allow operations on the cluster. Here the _user_ `Alice Smith` can `list` `pods` and `deployments` but not `services`.
+
+Let us try to **run** a **Pod** using this `kubeconfig`. We shall run a `busybox` **Pod** and execute a `tail -f /dev/null` to keep it running so that the container is not terminated.
+
+```bash
+$  k --kubeconfig=$HOME/.kube/acc-config run my-bb --restart=Never --image=busybox -- "/bin/sh" "-c" "tail -f /dev/null"
+pod/my-bb created
+$  k --kubeconfig=$HOME/.kube/acc-config get pods
+NAME    READY   STATUS    RESTARTS   AGE
+my-bb   1/1     Running   0          8s
+```
+
+So now let us try to **delete** the pod as we don't need it any longer.
+
+```bash
+$ k --kubeconfig=$HOME/.kube/acc-config delete pod my-bb --grace-period=0 --force
+Error from server (Forbidden): pods "my-bb" is forbidden: User "Alice Smith" cannot delete resource "pods" in API group "" in the namespace "accounting"
+```
+
+If we look at the _permission_ we gave to the `acc-pods` **Role**, it does NOT have a `delete` **verb**, therefore **User**  `Alice Smith` will not be allowed to do so.
+
+We can always delete it using our _default admin_ config. 
+
+```bash
+$ k -n accounting delete pod my-bb --grace-period=0 --force
+```
+
+Now let us assume that we want to allow our user `Alice Smith` to list all the `namespaces`. To do this we will have to use a **ClusterRole** and **ClusterRoleBinding** as `namespaces` are _cluster level_ resources.
+
+Similar to what we did above, we create a **ClusterRole**. Just to make sure we get the values correct, we will take a hybrid approach by creating YAML files imperatively and then checking it, and applying it.
+
+```bash
+$ k create clusterrole view-ns --verb=get,list --resource=namespaces --dry-run=client -o yaml > vw-ns-cr.yaml
+```
+
+The YAML file should look like:
+
+```yaml
+1 apiVersion: rbac.authorization.k8s.io/v1
+2 kind: ClusterRole
+3 metadata:
+4   creationTimestamp: null
+5   name: view-ns
+6 rules:
+7 - apiGroups:
+8   - ""
+9   resources:
+10   - namespaces
+11   verbs:
+12   - get
+13   - list
+```
+
+This should give _permissions_ to `list` and `get`  **namespaces**. Now we can `apply` this YAML file and the **ClusterRole** should be created.
+
+```bash
+$ k apply -f vw-ns-cr.yaml
+```
+
+Next we **bind** this **ClusterRole** (`view-ns`) to our **user** (`Alice Smith`) with a (**ClusterRoleBinding**):
+
+```bash
+$ k create clusterrolebinding view-ns-bind --user="Alice Smith" --clusterrole="vw-ns" --dry-run=client -o yaml > vw-ns-cr-bind.yaml
+```
+
+The YAML file should be as follows:
+
+```yaml
+1 apiVersion: rbac.authorization.k8s.io/v1
+2 kind: ClusterRoleBinding
+3 metadata:
+4   creationTimestamp: null
+5   name: view-ns-bind
+6 roleRef:
+7   apiGroup: rbac.authorization.k8s.io
+8   kind: ClusterRole
+9   name: view-ns
+10 subjects:
+11 - apiGroup: rbac.authorization.k8s.io
+12   kind: User
+13   name: Alice Smith
+```
+
+It **binds** the `roleRef` `view-ns` to the `subject` `Alice Smith`. Again we `apply` this file and it should create the **ClusterRoleBinding**.
+
+```bash
+$ k apply -f vw-ns-cr-bind.yaml
+```
+
+Now time to test it out. One way to check _permissions_ is to use the `auth can-i` command:
+
+```bash
+$ k --kubeconfig=$HOME/.kube/acc-config auth can-i get pods
+yes
+```
+
+We already know we can do that, so now let us see if we can `list` **namespaces**.
+
+```bash
+$ k --kubeconfig=$HOME/.kube/acc-config auth can-i list ns
+yes
+```
+
+And if we try to get the **namespaces** we see we are successful:
+
+```bash
+$ k --kubeconfig=$HOME/.kube/acc-config get ns
+NAME                 STATUS   AGE
+accounting           Active   4h31m
+default              Active   170d
+...
+```
+
+#### >> Service Accounts
