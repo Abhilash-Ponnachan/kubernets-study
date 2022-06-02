@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rlb-rl-sa-acc
+  namespace: accounting
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rl-sa-acc
+subjects:
+- kind: ServiceAccount
+  name: acc-app-sa
+  namespace: accounting

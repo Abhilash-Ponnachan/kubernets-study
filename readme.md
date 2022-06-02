@@ -1191,7 +1191,7 @@ $ k create ns accounting
 Next we create a **Role** with the required permissions (in this case just _manage pods_, _list deployments_). To do this we can create a manifest file for the _Kubernetes API Object_ **Role**. The simplest way to have a _starting template_ of the YAML is to _dry-run_ the imperative command and redirect it to a file.
 
 ```bash
-$ k create role acc-pods --resource=pods --verb=get,list,watch --namesoace=accounting --dry-run=client -o yaml > acc-role.yaml
+$ k create role acc-pods --resource=pods --verb=get,list,watch --namespace=accounting --dry-run=client -o yaml > acc-role.yaml
 ```
 
 Now we should have a `acc-role.yaml` file which we can open and edit and make necessary additions. When done, for our demo purposes it should look like:
@@ -1386,3 +1386,445 @@ default              Active   170d
 ```
 
 #### >> Service Accounts
+
+Now that we have seen how we can **authenticate** _users_ with _certificates_ and **authorise** them using **RBAC**, we can extend that to understand how **"applications/services"** running in our cluster can securely interact with the _Kubernetes_ API. This is generally used when when we have *CI/CD tools* that need to deploy some resources, or *extensions* like *operators*, *autoscalers*, *custom web hooks*. In general any time we wish to _automate_ something based on _events_ in _Kubernetes_ and/or invoke _Kubernetes APIs_ to take action, we would rely on **Service Accounts**. 
+
+Unlike **Users (or Groups)**,  **Service Accounts** are _Kubernetes API resources_. They can be created and managed using _imperative commands_ or _configuration files_. Once a **Service Account** is created we can link it with **Deployments or Pods**, and when the **Pods** start up they will _"assume"_ the **Service Account**, which means under the hood a **secure token** is created and loaded into a specific path (automatically) mounted into the **Pod**. Applications running in the **Pod** can use this **token** and **authenticate** with _Kubernetes API_ to interact with it. Similar to **users**, we can use **Roles** to specify what _permissions_ we want on the APIs and link that to the **Service Account** using **Role Bindings**.
+
+We can try to simulate this behaviour in our `accounting` namespace.
+
+First step is to create a **Service Account**. Again we shall take a _hybrid_ approach of _imperatively_ creating a YAML file and then applying it. This is juts to make it easier to visualise the fields/properties.
+
+```bash
+$ k create sa acc-app-sa -n accounting --dry-run=client -o yaml > sa-acc.yaml
+```
+
+This should create a YAML file which looks like:
+
+```yaml
+1 apiVersion: v1
+2 kind: ServiceAccount
+3 metadata:
+4   name: acc-app-sa
+5   namespace: accounting
+```
+
+Now we can apply this configuration file, and create the **Service Account**.
+
+```bash
+$ k apply -f sa-acc.yaml
+# Note, we did not need to specify the namesapce in the command (like -n accounting)
+# this is because, it is already specified in the YAML file.
+# Though as a best-practice it is always safer to specify the namespace in the command as well.
+
+
+# We can see that the serviceaccount is created
+$ k get sa -n accounting
+NAME         SECRETS   AGE
+acc-app-sa   1         14s
+default      1         29h
+
+# We should be able to see the details of the serviceaccount
+$ k get sa acc-app-sa -n accounting -o yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"ServiceAccount","metadata":{"annotations":{},"name":"acc-app-sa","namespace":"accounting"}}
+  creationTimestamp: "2022-05-31T16:57:45Z"
+  name: acc-app-sa
+  namespace: accounting
+  resourceVersion: "8890581"
+  uid: be<redacted>6b8-c776-<redacted>-b8f7-<redacted>
+secrets:
+- name: acc-app-sa-token-sqt5h
+```
+
+When the **Service Account** `acc-app-sa` was created a **token** was generated and stored as a **Kubernetes Secret** (`acc-app-sa-token-sqt5h`).
+
+If we look inside the **Secret** we should be able to see the **token**.
+
+```bash
+$ k describe secret acc-app-sa-token-sqt5h -n accounting 
+Name:         acc-app-sa-token-sqt5h
+Namespace:    accounting
+Labels:       <none>
+Annotations:  kubernetes.io/service-account.name: acc-app-sa
+              kubernetes.io/service-account.uid: be<redacted>6b8-c776-<redacted>-b8f7-<redacted>
+
+Type:  kubernetes.io/service-account-token
+
+Data
+====
+ca.crt:     1066 bytes
+namespace:  10 bytes
+token:      eyJhbGc---------<redacted>------------.eyJpc3-------------<redacted>-----------EifQ.s7K-----<redacted>----TiWyg
+```
+
+So we can see that the **token** issued for the **Service Account** is a **JWT** token. In fact we can examine the _claims_ in this token easily by _Base64 decoding_ the middle part of the **token**.
+
+```bash
+# assign the value of 'token' from above to variable $tkn
+$ echo $tkn | cut -d '.' -f 2 | base64 -d | jq '.'
+..
+{
+  "iss": "kubernetes/serviceaccount",
+  "kubernetes.io/serviceaccount/namespace": "accounting",
+  "kubernetes.io/serviceaccount/secret.name": "acc-app-sa-token-sqt5h",
+  "kubernetes.io/serviceaccount/service-account.name": "acc-app-sa",
+  "kubernetes.io/serviceaccount/service-account.uid": "be<redacted>6b8-c776-<redacted>-b8f7-<redacted>",
+  "sub": "system:serviceaccount:accounting:acc-app-sa"
+}
+```
+
+If we look deeper we can also see the `ca.crt` with which this token is signed.
+
+```bash
+$ k get secret acc-app-sa-token-sqt5h -o yaml -n accounting 
+apiVersion: v1
+data:
+  ca.crt: LS0tLS1---<redacted>----LS0tCg==
+  namespace: YWNjb3VudGluZw==
+  token: ZXlKaGJHY---<redacted>----XeWc=
+kind: Secret
+metadata:
+  annotations:
+    kubernetes.io/service-account.name: acc-app-sa
+    kubernetes.io/service-account.uid: be<redacted>6b8-c776-<redacted>-b8f7-<redacted>
+  creationTimestamp: "2022-05-31T16:57:45Z"
+  name: acc-app-sa-token-sqt5h
+  namespace: accounting
+  resourceVersion: "8890580"
+  ....
+type: kubernetes.io/service-account-token
+```
+
+Note that the **"token"** value in this looks different from what we saw above (with the `describe`) command. Actually it is the **same**, it is just _Base64 Encoded_ data since we are looking at the details of the **"Kubernetes Secret"** (it is stored _Base64 Encoded_). If we decode it we will get the same string as we saw previously.
+
+We also see the `ca.crt` data, and if we examine the details it will be the same _Kubernetes Cluster CA certificate_ we saw when were creating the **kube-config** file. We should be able to see the certificate details using the command:
+
+```bash
+# assign the vlue of 'ca.crt' from above to the variable 'crt'
+# now base64 decode and pass it to openssl
+$ echo $crt1 | base64 -d | openssl x509 -text
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 0 (0x0)
+        Signature Algorithm: sha256WithRSAEncryption
+        Issuer: CN = kubernetes
+        Validity
+            Not Before: Nov 19 15:21:04 2021 GMT
+            Not After : Nov 17 15:21:04 2031 GMT
+        Subject: CN = kubernetes
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                RSA Public-Key: (2048 bit)
+                Modulus:
+....
+```
+
+Now that we know that **token** (which is a **JWT**) is generated for the **Service Account** and signed by the **Cluster CA certificate**, we shall see how this can be used.
+
+We will do this the easy way, by mimicking an API call using **cURL** from a **Pod** running an `Alpine` _Linux_ container. We have slightly modified the `Alpine` image by installing **cURL** on it. Then we `exec` into this container and make an HTTP call to **Kubernetes** API, using the **token** mounted via the **Service Account**. This seems like a hack approach, but it saves us the trouble of creating an application to test this, and makes it clearer what is happening under the hood. 
+
+So first step is to create a **Pod** YAML manifest that specifies our (modified) `Alpine` image and our `acc-app-sa` **Service Account**.
+
+```bash
+# Create a YAML file imperatively 
+$ k run dummy-acc-app --restart=Never --image=alpine_plus -n accounting --dry-run=client -o yaml > pod-dummy-app.yaml
+```
+
+Note that `alpine_plus` is our modified `alpine` image (with **cURL**).
+
+Now we open this YAML file and add, our **Service Account** to it.
+
+```yaml
+  1 apiVersion: v1
+  2 kind: Pod
+  3 metadata:
+  4   name: dummy-acc-app
+  5   namespace: accounting
+  6 spec:
+  7   containers:
+  8   - image: alpine_plus
+  9     name: dummy-acc-app
+ 10     imagePullPolicy: Never
+ 11     command: ["/bin/sh"]
+ 12     args:
+ 13       - -c
+ 14       - >-
+ 15         echo ===== Dummy App on Alipne with cUrl ====
+ 16         && tail -f /dev/null
+ 17   restartPolicy: Never
+ 18   serviceAccountName: acc-app-sa
+```
+
+Note that **Service Account** is at the **Pod** level. Also, since we are using our own `alpine_plus` image which is  a _local Docker image_ (loaded into the `kind` **Cluster**), we should specify the `imagePullPolicy` as `Never`. Additionally we have a `command` to execute something (`tail -f /dev/null`) that will remain running to keep the container from being terminated.
+
+Now we `apply` this file to create our **Pod** in the `accounting` **Namespace**.
+
+```bash
+# Apply the pod manifest file to create it
+$ k apply -f pod-dummy-app.yaml
+
+# examine the created pod
+$ k -n accounting describe pod dummy-acc-app
+Name:         dummy-acc-app
+Namespace:    accounting
+...
+IP:           10.244.0.16
+IPs:
+  IP:  10.244.0.16
+Containers:
+  dummy-acc-app:
+    Container ID:  containerd://.....02901dd5d8
+    Image:         alpine_plus
+    Image ID:      sha256:....bccbe808b3
+    Port:          <none>
+    Host Port:     <none>
+    Command:
+      /bin/sh
+    Args:
+      -c
+      echo ===== Dummy App on Alipne with cUrl ==== && tail -f /dev/null
+    State:          Running
+      Started:      Thu, 02 Jun 2022 12:44:25 +0100
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-cln5j (ro)
+Conditions:
+  Type              Status
+.....
+```
+
+We can see that data related to **Service Account** is injected on to an _automatically mounted volume path_ (`/var/run/secrtes/kubernetes.io/serviceaccount`). Now we can try to `exec` into this and _container_ and look at the _contents_ of this path.
+
+Instead of using the _default admin_ **user**, let us try to `exec` into the **Pod** using our `Alice Smith` **user**. However `Alice Smith` will not have permission to do this, so we have to modify the **Role** bound to this **user** to add the `pod/exec` resource (in the **resources** section).
+
+```yaml
+  1 apiVersion: rbac.authorization.k8s.io/v1
+  2 kind: Role
+  3 metadata:
+  4   name: acc-pods
+  5   namespace: accounting
+  6 rules:
+  7 - apiGroups:
+  8   - ""
+  9   resources:
+ 10   - pods
+ 11   - pods/exec
+ 12   verbs:
+ 13   - get
+ 14   - list
+ 15   - watch
+ 16   - create
+ 17   - update
+ 18   - patch
+ 19 - apiGroups:
+ 20   - "apps"
+ 21   resources:
+ 22   - deployments
+ 23   verbs:
+ 24   - get
+ 25   - list
+```
+
+Now we should be able to exec into our `dummy-acc-app` **Pod** as shown.
+
+```bash
+$ k --kubeconfig=$HOME/.kube/acc-config exec -it dummy-acc-app -- /bin/sh
+```
+
+Note, that we can set the `KUBECONFIG` _environment variable_ or an _alias_ `kc="kubectl --kubeconfig=$HOME/.kube/acc-config"` if we need to avoid typing the `--kubeconfig` flag with every command. However, I shall leave it like this in the readme, to make it explicit.
+
+Now that we are inside the **Pod** we can look at the _path_ where the _data_ related to the **Service Account** gets injected.
+
+```bash
+# We have execed into the pod `dummy-acc-app`
+$ ls /var/run/secrets/kubernetes.io/
+ serviceaccount
+$ ls /var/run/secrets/kubernetes.io/serviceaccount/
+ ca.crt     namespace  token
+```
+
+There are _three_ files here. The **token** file contains the **JWT** token as its content.
+
+Now we shall try to use this **token** to make a request to _Kubernetes_ API. To make an HTTP call to the _Kubernetes_ API service we need a few parameters, and we shall extract them and set them to **bash** _variables_ to make it easier to handle.
+
+**- The API Server**
+
+```bash
+$ APISERVER=https://kubernetes.default.svc
+```
+
+If we do an `nslookup` or `dig` on `kubernetes.default.svc`, we will be bale to see the **IP**.
+
+**- Path to Service Account data mount**
+
+```bash
+$ PATH_SRV_ACC=/var/run/secrets/kubernetes.io/serviceaccount
+```
+
+**- Namespace**
+
+```bash
+$ NAMESPACE=$(cat ${PATH_SRV_ACC}/namespace)
+```
+
+**- Server CA Certificate**
+
+**cURL** needs this to make a secure **HTTPS** call (as this is a local **CA Certificate** and not in the _list_ of **default CAs** that comes with **cURL** ).
+
+```bash
+# Path to `ca.crt` for the 'service account'
+$ CACERT=${PATH_SRV_ACC}/ca.crt
+```
+
+**- The Token**
+
+The **JWT** **token** issued for the **Service Account**
+
+```bash
+$ TOKEN=$(cat ${PATH_SRV_ACC}/token)
+```
+
+**Make cURL Request**
+
+Finally we are ready to now make an API request to the _Kubernetes_ API server.
+
+```bash
+# HTTPS request to 'list pods'
+$ curl --cacert ${CACERT} --header "Authorization: Bearer $TOKEN" -s ${APISERVER}/api/v1/namespaces/$NAMESPACE/pods/
+
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {
+    
+  },
+  "status": "Failure",
+  "message": "pods is forbidden: User \"system:serviceaccount:accounting:acc-app-sa\" cannot list resource \"pods\" in API group \"\" in the namespace \"accounting\"",
+  "reason": "Forbidden",
+  "details": {
+    "kind": "pods"
+  },
+  "code": 403
+}
+```
+
+And, we get a `403` error. As the error message says we can see that _Kubernetes_ has correctly **authenticated** the request (based on the **token**) as the **Service Account** `acc-app-sa` in the **Namespace** `accounting`, and responded with an **authorisation** failure, since this **Service Account** does not have *permission* to *list* **Pods** yet (in fact it has no permission at all yet). To give it _permissions_ we need to do the same thing as we did with **User** (`Alice Smith`). We need to create a **Role** (with _permissions_ needed by the **Service Account**), and link it using **RoleBinding**. We can do that using the following YAMLs.
+
+```bash
+# imperatively create YAML file for Role
+$ k create role rl-sa-acc --resource=pods --verb=get,list --namespace=accounting --dry-run=client -o yaml > rl-sa-acc.yaml
+```
+
+Now we check the YAML file for **Role**, and then `apply` it.
+
+```yaml
+  1 apiVersion: rbac.authorization.k8s.io/v1
+  2 kind: Role
+  3 metadata:
+  4   name: rl-sa-acc
+  5   namespace: accounting
+  6 rules:
+  7 - apiGroups:
+  8   - ""
+  9   resources:
+ 10   - pods
+ 11   verbs:
+ 12   - get
+ 13   - list
+```
+
+Apply the configuration file to create the **Role**.
+
+```bash
+$ k apply -f rl-sa-acc.yaml
+```
+
+Then, do the same for the **RoleBinding**.
+
+```bash
+# Imperatively create rolebinding YAML
+$ k create rolebinding rlb-rl-sa-acc -n accounting --role=rl-sa-acc --serviceaccount=accounting:acc-app-sa --dry-run=client -o yaml > rlb-rl-sa-acc.yaml
+```
+
+The **RoleBinding** YAML should look like:
+
+```yaml
+  1 apiVersion: rbac.authorization.k8s.io/v1
+  2 kind: RoleBinding
+  3 metadata:
+  4   name: rlb-rl-sa-acc
+  5   namespace: accounting
+  6 roleRef:
+  7   apiGroup: rbac.authorization.k8s.io
+  8   kind: Role
+  9   name: rl-sa-acc
+ 10 subjects:
+ 11 - kind: ServiceAccount
+ 12   name: acc-app-sa
+ 13   namespace: accounting
+```
+
+It _links_ the **subject** `acc-app-sa` (which is a **Service Account**) to the **Role** `rl-sa-acc`.
+
+Now let us `apply` the YAML.
+
+```bash
+$ k apply -f rlb-rl-sa-acc.yaml 
+```
+
+If we now try to _list_ the **Role**s & **RoleBinding**s in this namespace, we should get:
+
+```bash
+$ k get role,rolebinding -n accounting 
+NAME                                       CREATED AT
+role.rbac.authorization.k8s.io/acc-pods    2022-05-30T12:32:18Z
+role.rbac.authorization.k8s.io/rl-sa-acc   2022-06-02T17:13:33Z
+
+NAME                                                  ROLE             AGE
+rolebinding.rbac.authorization.k8s.io/acc-alice-rb    Role/acc-pods    3d4h
+rolebinding.rbac.authorization.k8s.io/rlb-rl-sa-acc   Role/rl-sa-acc   103s
+```
+
+So we can see the **Role**s and **RoleBinding**s for the **user** `Alice Smith` and for our **Service Account** `acc-app-sa`.
+
+Now if we go back into the **Pod** (`exec`) and try calling the API to list **Pods** we should be successful.
+
+```bash
+$ curl --cacert ${CACERT} --header "Authorization: Bearer $TOKEN" -s ${APISERVER}/api/v1/namespaces/$NAMESPACE/pods/ 
+{
+  "kind": "PodList",
+  "apiVersion": "v1",
+  "metadata": {
+    "resourceVersion": "9041098"
+  },
+  "items": [
+    {
+      "metadata": {
+        "name": "dummy-acc-app",
+        "namespace": "accounting",
+        "uid": "5a1....a8ff01c",
+        "resourceVersion": "9003777",
+        "creationTimestamp": "2022-06-02T11:44:24Z",
+        ...
+        }
+     ....
+}
+# It gives a lot of details
+
+# We can get fancy with 'jq' to filter out only 'pod-names' or any other info
+$ curl --cacert ${CACERT} --header "Authorization: Bearer $TOKEN" -s ${APISERVER}/api/v1/namespaces/$NAMESPACE/pods/ | jq '
+.items[].metadata.name'
+
+ "dummy-acc-app"
+```
+
+Instead of using **cURL**, this could have been an application running in this **Pod** and that can use the _mounted_ **Service Account** to interact with the _Kubernetes_ cluster depending on what its **Role** allows it to do. This is a common pattern used to _extend_ the capabilities of the _cluster_ with _controllers_, or _webhooks_.
+
